@@ -4,10 +4,11 @@ import tempfile
 import keras
 import tf_keras as tkf
 from transformers import BertTokenizer, TFBertModel
+from app.model import ResumeAnalyzerModel
 # from model_test import ResumerAnalyzerModel
 
-from model import get_model
-from preprocess import (
+from app.model import get_model
+from app.preprocess import (
     extract_text_from_pdf,
     extract_text_from_docx,
     clean_text,
@@ -17,17 +18,15 @@ from preprocess import (
 
 app = FastAPI()
 
+## Uncomment to train a new model and save it
 model, tokenizer = get_model()
-
-# transformer = TFBertModel.from_pretrained('bert-base-uncased')
+model.save("app/models/model_1.0.0.keras")
 
 # custom_objects = {
-#     "ResumerAnalyzerModel": ResumerAnalyzerModel,
-#     "transformer": transformer
+#     "ResumeAnalyzerModel": ResumeAnalyzerModel,
 # }
-# model = keras.models.load_model("models/model_1.0.0.keras", custom_objects=custom_objects)
-
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+# model = keras.models.load_model("app/models/model_1.0.0.keras", custom_objects=custom_objects)
+# tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 @app.get("/")
 async def read_root():
@@ -54,7 +53,7 @@ async def analyze_resume(file: UploadFile = File(...)):
     cleaned = clean_text(raw_text)
     
     # Tokenize the cleaned text for model input.
-    encoded_input = tokenizer(cleaned, return_tensors='tf', padding=True, truncation=True)
+    encoded_input = dict(tokenizer(cleaned, return_tensors='tf', padding=True, truncation=True))
     
     # Run the model inference.
     token_logits, overall_score = model(encoded_input)
