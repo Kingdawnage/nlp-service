@@ -1,0 +1,9 @@
+services:
+  nlpservice:
+    image: kingdawnage/nlpservice:latest
+    container_name: nlpservice
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    ports:
+      - 8000:8000
