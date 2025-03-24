@@ -50,8 +50,11 @@ def extract_text_from_docx(file_path: str) -> str:
 
 def clean_text(raw_text: str) -> str:
     """Clean the extracted text by removing non-ASCII characters and extra whitespaces"""
+    # Remove markdown bold/italic markers
+    text = re.sub(r'\*\*|__', '', raw_text)
+    
     # Remove non-ASCII characters but preserve basic formatting
-    text = re.sub(r'[^\x00-\x7F\n]+', ' ', raw_text)
+    text = re.sub(r'[^\x00-\x7F\n]+', ' ', text)
     
     # Normalize line endings
     text = text.replace('\r\n', '\n').replace('\r', '\n')
@@ -151,22 +154,105 @@ def extract_entities(text: str) -> dict:
         entities[header] = content  # In a real solution, you might further process each section.
     return entities
 
-def generate_feedback(entities: dict, overall_score: float) -> str:
+
+def count_words(text: str) -> int:
+    return len(text.split())
+
+# def count_sentences(text: str) -> int:
+#     sentences = re.split(r'[.!?]+', text)
+#     sentences = [s for s in sentences if s.strip()]
+#     return len(sentences) if sentences else 1
+
+def count_sentences(text: str) -> int:
+    # Treat each non-empty line as a sentence
+    lines = [line for line in text.split('\n') if line.strip()]
+    return len(lines) if lines else 1
+
+def count_syllables(word: str) -> int:
+    word = word.lower()
+    vowels = "aeiouy"
+    syllables = 0
+    prev_vowel = False
+    for char in word:
+        if char in vowels:
+            if not prev_vowel:
+                syllables += 1
+                prev_vowel = True
+        else:
+            prev_vowel = False
+    return syllables if syllables > 0 else 1
+
+def total_syllables(text: str) -> int:
+    words = text.split()
+    return sum(count_syllables(word) for word in words)
+
+def flesch_reading_ease(text: str) -> float:
+    words = count_words(text)
+    sentences = count_sentences(text)
+    syllables = total_syllables(text)
+    return 206.835 - 1.015 * (words / sentences) - 84.6 * (syllables / words)
+
+def compute_section_score(section_text: str, min_expected: int) -> float:
     """
-    Generate feedback based on the presence of key sections and the overall resume score.
-    This is a simple placeholder logic.
+    Compute a simple score for a section based on its word count.
+    Returns a value between 0 and 1.
     """
-    feedback = []
-    required_sections = ["Name", "Profile", "Education", "Experience", "Skills"]
-    for section in required_sections:
-        if section not in entities or not entities[section]:
-            feedback.append(f"Consider adding more detail to your {section.lower()} section.")
+    words = count_words(section_text)
+    score = min(1.0, words / min_expected)
+    return score
+
+def compute_overall_score(model_score: float, section_scores: dict, readability: float) -> float:
+    """
+    Combine the model's overall score with section scores and readability.
+    You can use a weighted sum here.
+    For example, assume:
+      - 50% weight to the model score,
+      - 30% weight to the average section score,
+      - 20% weight to normalized readability (scaled between 0 and 1)
+    """
+    avg_section = sum(section_scores.values()) / len(section_scores) if section_scores else 0
+    # Assume readability 60 is average and 90 is best. Clamp between 60 and 90.
+    norm_readability = max(0, min((readability - 60) / 30, 1))
+    overall = 0.5 * model_score + 0.3 * avg_section + 0.2 * norm_readability
+    return overall
+
+def generate_feedback(entities: dict, model_score: float) -> dict:
+    feedback = {"general": "", "sections": {}}
     
-    # Provide feedback based on the overall score.
-    # (Note: With an untrained model, this score is arbitrary; adjust thresholds as needed.)
-    if overall_score >= 0:
-        feedback.append("Your resume seems well-structured; consider quantifying your achievements.")
+    # Define required sections and their minimum word thresholds.
+    required_sections = {
+        "Name": 1,
+        "Profile": 50,
+        "Education": 50,
+        "Experience": 100,
+        "Skills": 20
+    }
+    
+    section_scores = {}
+    for section, min_words in required_sections.items():
+        text = entities.get(section, "")
+        word_count = count_words(text)
+        score = compute_section_score(text, min_words)
+        section_scores[section] = score
+        if score < 1.0:
+            feedback["sections"][section] = f"Your {section} section is only {word_count} words; consider expanding it to at least {min_words} words."
+    
+    full_text = " ".join(entities.values())
+    readability = flesch_reading_ease(full_text)
+    if readability < 60:
+        feedback["general"] += f"Readability score is low ({readability:.1f}); try simplifying sentence structure. "
     else:
-        feedback.append("Consider revising the overall structure for clarity.")
+        feedback["general"] += f"Readability score is good ({readability:.1f}). "
     
-    return " ".join(feedback)
+    if model_score < 0.5:
+        feedback["general"] += "The model indicates there is room for improvement in overall structure. "
+    else:
+        feedback["general"] += "The overall structure appears strong. "
+    
+    # Return feedback along with the section scores and readability for further use.
+    return {
+        "general": feedback["general"].strip(),
+        "sections": feedback["sections"],
+        "section_scores": section_scores,
+        "readability": readability
+    }

@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import FastAPI, File, UploadFile
 import uvicorn
 import tempfile
@@ -9,6 +10,7 @@ from app.model import ResumeAnalyzerModel
 
 from app.model import get_model
 from app.preprocess import (
+    compute_overall_score,
     extract_text_from_pdf,
     extract_text_from_docx,
     clean_text,
@@ -18,15 +20,15 @@ from app.preprocess import (
 
 app = FastAPI()
 
-## Uncomment to train a new model and save it
-model, tokenizer = get_model()
-model.save("app/models/model_1.0.0.keras")
+# ## Uncomment to train a new model and save it
+# model, tokenizer = get_model()
+# model.save("app/models/model_1.0.0.keras")
 
-# custom_objects = {
-#     "ResumeAnalyzerModel": ResumeAnalyzerModel,
-# }
-# model = keras.models.load_model("app/models/model_1.0.0.keras", custom_objects=custom_objects)
-# tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+custom_objects = {
+    "ResumeAnalyzerModel": ResumeAnalyzerModel,
+}
+model = keras.models.load_model("app/models/model_1.0.0.keras", custom_objects=custom_objects)
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 @app.get("/")
 async def read_root():
@@ -56,21 +58,37 @@ async def analyze_resume(file: UploadFile = File(...)):
     encoded_input = dict(tokenizer(cleaned, return_tensors='tf', padding=True, truncation=True))
     
     # Run the model inference.
-    token_logits, overall_score = model(encoded_input)
-    overall_score_val = overall_score.numpy().tolist()[0][0]
+    token_logits, model_score_tensor = model(encoded_input)
+    model_score = model_score_tensor.numpy().tolist()[0][0]
     
     # Extract entities using our rule-based approach.
     entities = extract_entities(cleaned)
     
     # Generate feedback based on the extracted entities and overall score.
-    feedback_text = generate_feedback(entities, overall_score_val)
+    feedback_data = generate_feedback(entities, model_score)
+    
+    overall_score = compute_overall_score(model_score, feedback_data["section_scores"], feedback_data["readability"])
     
     # Construct the JSON output.
     output_json = {
         "entities": entities,
-        "scores": {"overall": overall_score_val},
-        "feedback": feedback_text,
-        "debug": {"token_logits_shape": token_logits.shape.as_list()}
+        "scores": {
+            "overall": overall_score,
+            "model_score": model_score,
+            "readability": feedback_data["readability"],
+            "section_scores": feedback_data["section_scores"]
+        },
+        "feedback": {
+            "general": feedback_data["general"],
+            "sections": feedback_data["sections"]
+        },
+        "meta": {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "model_version": "1.0.0"
+        },
+        "debug": {
+            "token_logits_shape": token_logits.shape.as_list()
+        }
     }
     
     return output_json
