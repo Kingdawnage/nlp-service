@@ -34,6 +34,10 @@ tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 async def read_root():
     return {"message": "Welcome to the Resume Analyzer API!"}
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
 @app.post("/analyze_resume/")
 async def analyze_resume(file: UploadFile = File(...)):
     # Save the uploaded file temporarily.
